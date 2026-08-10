@@ -1,133 +1,166 @@
 # 💰 Expense Tracker
 
-A resume-ready personal expense tracking application built with **FastAPI, PostgreSQL, Streamlit, JWT authentication, explicit SQL, and Ollama**.
+A full-stack personal expense tracking system that helps users manage expenses, analyze spending, and get AI-powered insights.
 
-## Features
+---
 
-- User registration and login with JWT access tokens
-- Secure password hashing with Argon2 via `pwdlib`
-- User-isolated expense and category data
-- Expense CRUD (create, view, update/delete through API)
-- Default categories: Food, Transport, Shopping, Bills
-- User-created categories
-- Payment methods: UPI, cards, cash, bank transfer, other
-- Streamlit dashboard with total spend, monthly spend, transactions, top category, category chart, and monthly trend
-- Expense listing/filter-ready REST API
-- Ollama-powered natural-language expense assistant
-- AI responses are grounded in fixed PostgreSQL queries instead of allowing the LLM to generate arbitrary SQL
-- FastAPI Swagger/OpenAPI documentation
+## 🚀 Overview
 
-## Architecture
+This project provides an end-to-end expense management workflow:
+
+* Track daily expenses
+* Organize expenses by category
+* Analyze spending patterns
+* Visualize monthly spending
+* Ask natural-language questions about expenses using an LLM
+
+---
+
+## ✨ Features
+
+* 🔐 **User Authentication**
+
+  * JWT-based authentication
+  * Secure password hashing
+
+* 💸 **Expense Management**
+
+  * Add, update, delete, and view expenses
+  * Filter expenses by category, payment method, and date
+
+* 🏷️ **Categories**
+
+  * Default expense categories
+  * Create custom categories
+
+* 📊 **Spending Dashboard**
+
+  * Monthly spending
+  * Category breakdown
+  * Spending trends
+  * Recent transactions
+
+* 🤖 **AI-powered Insights**
+
+  * Ask questions about your spending
+  * Get insights using Ollama and your expense data
+
+---
+
+## 🏗️ Architecture
 
 ```text
+User
+  ↓
 Streamlit UI
-     |
-     | HTTP + JWT
-     v
- FastAPI API
-  |    |    |
-  |    |    +---- Ollama (local LLM)
-  |    |
-  |    +--------- Auth / Expense / Category logic
-  |
-  +-------------- PostgreSQL (explicit SQL via psycopg)
+  ↓
+FastAPI
+  ↓
+PostgreSQL
+  ↓
+Expense Analytics
+  ↓
+Ollama
+  ↓
+AI Insights
 ```
 
-## Project structure
+---
+
+## 🛠️ Tech Stack
+
+* **Frontend:** Streamlit
+* **Backend:** FastAPI
+* **Database:** PostgreSQL
+* **Authentication:** JWT 
+* **AI:** Ollama
+* **Database Driver:** psycopg
+* **Dependency Management:** uv
+
+---
+
+## 📂 Project Structure
 
 ```text
-expense-tracker/
+.
 ├── app/
-│   ├── main.py
-│   ├── database.py
-│   ├── models.py
-│   ├── schemas.py
-│   ├── auth.py
-│   ├── expenses.py
-│   ├── categories.py
-│   └── ai.py
+│   ├── main.py          # FastAPI application
+│   ├── database.py      # Database connection
+│   ├── schemas.py       # Pydantic schemas
+│   ├── auth.py          # Authentication
+│   ├── expenses.py      # Expense APIs
+│   ├── categories.py    # Category APIs
+│   └── ai.py            # AI functionality
+│
 ├── ui/
-│   └── streamlit_app.py
+│   └── streamlit_app.py # Streamlit frontend
+│
 ├── sql/
-│   └── schema.sql
-├── .env.example
-├── requirements.txt
-└── README.md
+│   └── schema.sql       # Database schema
+│
+├── pyproject.toml
+├── uv.lock
+└── .env.example
 ```
 
-## Local setup
+---
 
-### 1. Create PostgreSQL database
+## ⚙️ Setup Instructions
 
-Create a database named `expense_tracker` in your local PostgreSQL installation.
-
-### 2. Create environment
+### 1. Clone the repository
 
 ```bash
-python -m venv .venv
-# Windows: .venv\\Scripts\\activate
-# macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
+git clone https://github.com/Gunjit27/expense-tracker.git
+cd expense-tracker
 ```
 
-Copy `.env.example` to `.env` and update the PostgreSQL credentials and JWT secret.
+### 2. Install dependencies
 
-### 3. Install Ollama
-
-Install Ollama locally, then pull a small model:
+Install [uv](https://docs.astral.sh/uv/) if needed:
 
 ```bash
-ollama pull llama3.2:3b
-ollama serve
+pip install uv
 ```
 
-You can change `OLLAMA_MODEL` in `.env` to another installed model.
-
-### 4. Run FastAPI
-
-From the project root:
+Then install the project dependencies:
 
 ```bash
-uvicorn app.main:app --reload
+uv sync
 ```
 
-Open the API docs at `http://localhost:8000/docs`.
+### 3. Configure environment
 
-### 5. Run Streamlit
+Create a `.env` file from `.env.example` and configure your PostgreSQL and Ollama settings.
 
-In another terminal:
+### 4. Run Backend
 
 ```bash
-streamlit run ui/streamlit_app.py
+uv run uvicorn app.main:app --reload
 ```
 
-The UI opens at `http://localhost:8501`.
+### 5. Run Frontend
 
-## API overview
+```bash
+uv run streamlit run ui/streamlit_app.py
+```
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| POST | `/auth/register` | Register user and return JWT |
-| POST | `/auth/login` | Login and return JWT |
-| GET | `/categories` | List user's categories |
-| POST | `/categories` | Add category |
-| DELETE | `/categories/{id}` | Delete unused category |
-| GET | `/expenses` | List user's expenses |
-| POST | `/expenses` | Add expense |
-| PUT | `/expenses/{id}` | Update expense |
-| DELETE | `/expenses/{id}` | Delete expense |
-| POST | `/ai/ask` | Ask Ollama about spending |
-| GET | `/health` | Health check |
+---
 
-## AI design
+## 🧪 How It Works
 
-The AI assistant deliberately does **not** generate unrestricted SQL. The backend identifies supported analytics questions, executes parameterized SQL against the authenticated user's data, and passes only the resulting context to Ollama for a concise natural-language answer.
+1. Register or log in
+2. Add and categorize expenses
+3. View spending through the dashboard
+4. Filter and analyze transactions
+5. Ask questions about your spending using the AI assistant
 
-This keeps calculations and user-data boundaries in application code while still providing a natural-language interface.
+---
 
-## Resume bullet examples
+## 💡 Use Cases
 
-- Built a full-stack personal expense tracker using **FastAPI, PostgreSQL, Streamlit, JWT authentication, and Ollama**.
-- Implemented secure user-scoped CRUD operations with parameterized SQL and Argon2 password hashing.
-- Developed an LLM-powered expense analytics assistant that grounds natural-language responses in PostgreSQL aggregations.
-- Created an interactive Streamlit dashboard for category, monthly, and transaction-level spending analytics.
+* Personal expense tracking
+* Monthly budget analysis
+* Spending pattern analysis
+* Financial insights
+* Expense categorization
+* Natural-language financial queries
