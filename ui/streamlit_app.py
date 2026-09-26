@@ -134,13 +134,18 @@ def categories_page():
 
 def ai_page():
     st.title("🤖 AI Expense Assistant")
-    st.caption("Ask questions about your spending. Ollama answers using SQL-backed expense data.")
-    question = st.text_input("Ask a question", placeholder="What was my highest spending?")
+    st.caption("Ask questions about your spending. The model picks a safe, predefined query, "
+               "and answers only from its results.")
+    question = st.text_input("Ask a question", placeholder="How much did I spend on Food last month?")
     if st.button("Ask", type="primary") and question.strip():
         with st.spinner("Thinking..."):
             data = api("POST", "/ai/ask", json={"question": question})
         if data:
             st.success(data["answer"])
+            with st.expander("How this was answered"):
+                st.write(f"Query: `{data['tool']}`")
+                st.json(data["arguments"])
+                st.json(data["data"])
 
 
 def main():
