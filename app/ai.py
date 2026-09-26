@@ -1,78 +1,113 @@
-import os
+"""Natural-language questions about spending, answered with LLM tool calling.
+
+Flow for one question:
+1. plan: the LLM picks a tool from ai_tools.TOOLS and fills in its arguments.
+   Invalid arguments are fed back to the model for one retry.
+2. run: the chosen tool runs a fixed, parameterized SQL query scoped to the user.
+3. answer: the LLM phrases the query result as a short answer.
+"""
+import json
 from datetime import date
 
-import requests
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from .ai_tools import PAYMENT_METHODS, TOOL_SPECS, ToolArgError, ToolCall, parse_tool_call, run_tool
 from .auth import get_current_user
 from .database import get_conn
+from .llm import LLMError, OllamaClient
 
 router = APIRouter(prefix="/ai", tags=["ai"])
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
+MAX_ATTEMPTS = 2
 
 
 class Question(BaseModel):
-    question: str
+    question: str = Field(min_length=1, max_length=500)
 
 
-def fetch_context(question: str, user_id: int):
-    q = question.lower()
-    today = date.today()
-    with get_conn() as conn:
-        if any(k in q for k in ["highest", "largest", "biggest", "most expensive"]):
-            rows = conn.execute("""
-                SELECT e.amount, c.name, e.payment_method, e.expense_date, COALESCE(e.description,'')
-                FROM expenses e JOIN categories c ON c.id=e.category_id
-                WHERE e.user_id=%s ORDER BY e.amount DESC LIMIT 5
-            """, (user_id,)).fetchall()
-            return "Top 5 expenses: " + repr(rows)
-        if "category" in q and any(k in q for k in ["most", "highest", "spend"]):
-            rows = conn.execute("""
-                SELECT c.name, SUM(e.amount) total
-                FROM expenses e JOIN categories c ON c.id=e.category_id
-                WHERE e.user_id=%s GROUP BY c.name ORDER BY total DESC
-            """, (user_id,)).fetchall()
-            return "Spending by category: " + repr(rows)
-        if "payment" in q or "upi" in q or "bank transfer" in q:
-            rows = conn.execute("""
-                SELECT payment_method, SUM(amount) total, COUNT(*) transactions
-                FROM expenses WHERE user_id=%s GROUP BY payment_method ORDER BY total DESC
-            """, (user_id,)).fetchall()
-            return "Spending by payment method: " + repr(rows)
-        if "this month" in q or "monthly" in q:
-            rows = conn.execute("""
-                SELECT COALESCE(SUM(amount),0), COUNT(*) FROM expenses
-                WHERE user_id=%s AND date_trunc('month', expense_date)=date_trunc('month', %s::date)
-            """, (user_id, today)).fetchone()
-            return f"Current month total and transactions: {rows}"
-        rows = conn.execute("""
-            SELECT COALESCE(SUM(amount),0), COUNT(*) FROM expenses WHERE user_id=%s
-        """, (user_id,)).fetchone()
-        return f"All-time total and transactions: {rows}"
+class PlanningError(RuntimeError):
+    pass
 
 
-def ask_ollama(question: str, context: str) -> str:
-    prompt = f"""You are an expense analytics assistant. Answer using ONLY the database context below.
-Do not invent numbers. Keep the answer concise and mention currency as INR (₹) when appropriate.
+def planner_prompt(today: date, categories: list[str]) -> str:
+    return f"""You turn questions about a user's personal expenses into exactly one tool call.
+Today is {today:%A, %d %B %Y}.
+The user's categories are: {", ".join(categories)}.
+Payment methods are: {", ".join(PAYMENT_METHODS)}.
 
-Question: {question}
-Database context: {context}
-"""
-    try:
-        response = requests.post(
-            OLLAMA_URL,
-            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
-            timeout=60,
-        )
-        response.raise_for_status()
-        return response.json().get("response", "No answer returned by Ollama.").strip()
-    except requests.RequestException as exc:
-        raise HTTPException(503, f"Ollama is unavailable: {exc}")
+Rules:
+- Always call exactly one tool. Never answer in text.
+- Pick the period that matches the question. Leave it as all_time if no time is mentioned.
+- For a named month, use period "month" with month as YYYY-MM, taking the most recent such month that is not in the future.
+- Use period "custom" with start_date/end_date only for explicit dates or date ranges.
+- Set category only when the question is about one category. Map synonyms to the closest category above
+  (for example groceries or restaurants to a food category, cabs or fuel to a transport category).
+- Set payment_method only when the question names one.
+- Questions may be in Hinglish; interpret them the same way."""
+
+
+def plan(question: str, today: date, categories: list[str], llm) -> tuple[ToolCall, int]:
+    """Ask the model for a tool call. Returns the validated call and the number of attempts used."""
+    messages = [
+        {"role": "system", "content": planner_prompt(today, categories)},
+        {"role": "user", "content": question},
+    ]
+    error = None
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        message = llm.chat(messages, tools=TOOL_SPECS)
+        calls = message.get("tool_calls") or []
+        if not calls:
+            error = "You must call one of the tools."
+            messages += [message, {"role": "user", "content": error}]
+            continue
+        function = calls[0]["function"]
+        try:
+            return parse_tool_call(function["name"], function.get("arguments"), categories), attempt
+        except ToolArgError as exc:
+            error = str(exc)
+            messages += [message, {"role": "tool", "content": f"Error: {error}. Call the tool again with fixed arguments."}]
+    raise PlanningError(error)
+
+
+ANSWER_PROMPT = """You are an expense analytics assistant. Answer the user's question using ONLY the data below.
+Do not invent numbers. Amounts are in INR (₹). If the data is empty or the total is 0, say no matching expenses were found.
+Keep the answer to one or two sentences."""
+
+
+def answer(question: str, call: ToolCall, result: dict, llm) -> str:
+    data = {"tool": call.name, "filters": call.args.model_dump(mode="json", exclude_none=True), "result": result}
+    message = llm.chat([
+        {"role": "system", "content": ANSWER_PROMPT},
+        {"role": "user", "content": f"Question: {question}\n\nData: {json.dumps(data, ensure_ascii=False)}"},
+    ])
+    return (message.get("content") or "").strip()
+
+
+def get_llm() -> OllamaClient:
+    return OllamaClient()
 
 
 @router.post("/ask")
-def ask(question: Question, user=Depends(get_current_user)):
-    context = fetch_context(question.question, user["id"])
-    return {"answer": ask_ollama(question.question, context)}
+def ask(question: Question, user=Depends(get_current_user), llm=Depends(get_llm)):
+    today = date.today()
+    with get_conn() as conn:
+        categories = [r[0] for r in conn.execute(
+            "SELECT name FROM categories WHERE user_id = %s ORDER BY name", (user["id"],)
+        ).fetchall()]
+    try:
+        call, _ = plan(question.question, today, categories, llm)
+        with get_conn() as conn:
+            result = run_tool(conn, user["id"], call, today)
+        text = answer(question.question, call, result, llm)
+    except LLMError as exc:
+        raise HTTPException(503, str(exc))
+    except PlanningError:
+        raise HTTPException(
+            422, "Couldn't turn that into a query. Try something like 'How much did I spend on Food last month?'"
+        )
+    return {
+        "answer": text,
+        "tool": call.name,
+        "arguments": call.args.model_dump(mode="json", exclude_none=True),
+        "data": result,
+    }

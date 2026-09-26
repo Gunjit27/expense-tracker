@@ -44,8 +44,9 @@ This project provides an end-to-end expense management workflow:
 
 * 🤖 **AI-powered Insights**
 
-  * Ask questions about your spending
-  * Get insights using Ollama and your expense data
+  * Ask questions about your spending in plain English (or Hinglish)
+  * The LLM picks one of three predefined queries via tool calling; it never writes SQL
+  * Answers come only from the query results, and the UI shows which query was used
 
 ---
 
@@ -69,13 +70,58 @@ AI Insights
 
 ---
 
+## 🤖 How the AI Assistant Works
+
+```text
+Question ──► LLM picks a tool + arguments (Ollama tool calling)
+                 │
+                 ▼
+        Pydantic validation ──invalid──► error fed back to the LLM, one retry
+                 │
+                 ▼
+        Dates resolved in code ("last_month" → 2026-08-01..2026-08-31)
+                 │
+                 ▼
+        Fixed, parameterized SQL, always scoped to the logged-in user
+                 │
+                 ▼
+        LLM phrases the answer from the query result only
+```
+
+The model can call three tools (`app/ai_tools.py`):
+
+| Tool | Answers questions like |
+|---|---|
+| `total_spend` | "How much did I spend on Food last month?" |
+| `spend_breakdown` | "Where did my money go in August?", "Monthly trend this year" |
+| `find_expenses` | "My 3 biggest expenses this year", "Recent UPI payments" |
+
+All three share the same filters: a time period, a category and a payment method.
+
+Why tool calling instead of text-to-SQL: the model can only choose among safe, reviewed queries, and it never sees or sets the user id, so one user can't read another's data through a prompt. Why periods instead of dates: small models are unreliable at date arithmetic, so the model says `last_month` and code works out the dates.
+
+### Evaluation
+
+`evals/router_cases.jsonl` holds 52 questions, including synonyms ("cabs" → Transport), named months, explicit date ranges and Hinglish, each with the expected tool and arguments. The runner scores whether the model produced exactly the right query:
+
+```bash
+python -m evals.run_router_eval --baseline --model llama3.1:8b --out evals/results.md
+```
+
+| Router | Exact match |
+|---|---|
+| Old keyword router (baseline) | 10% (5/52) |
+| `llama3.1:8b` tool calling | run the command above |
+
+---
+
 ## 🛠️ Tech Stack
 
 * **Frontend:** Streamlit
 * **Backend:** FastAPI
 * **Database:** PostgreSQL
 * **Authentication:** JWT 
-* **AI:** Ollama
+* **AI:** Ollama (llama3.1:8b) with tool calling
 * **Database Driver:** psycopg
 * **Dependency Management:** uv
 
@@ -92,7 +138,11 @@ AI Insights
 │   ├── auth.py          # Authentication
 │   ├── expenses.py      # Expense APIs
 │   ├── categories.py    # Category APIs
-│   └── ai.py            # AI functionality
+│   ├── ai.py            # AI assistant endpoint: plan, run, answer
+│   ├── ai_tools.py      # Query tools the LLM can call
+│   └── llm.py           # Ollama chat client
+│
+├── evals/               # Router eval set and runner
 │
 ├── ui/
 │   └── streamlit_app.py # Streamlit frontend
@@ -135,6 +185,12 @@ uv sync
 ### 3. Configure environment
 
 Create a `.env` file from `.env.example` and configure your PostgreSQL and Ollama settings.
+
+Pull the model the assistant uses (any Ollama model with tool-calling support works; set `OLLAMA_MODEL` to change it):
+
+```bash
+ollama pull llama3.1:8b
+```
 
 ### 4. Run Backend
 
