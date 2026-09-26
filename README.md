@@ -1,5 +1,7 @@
 # 💰 Expense Tracker
 
+[![Tests](https://github.com/Gunjit27/expense-tracker/actions/workflows/tests.yml/badge.svg)](https://github.com/Gunjit27/expense-tracker/actions/workflows/tests.yml)
+
 A full-stack personal expense tracking system that helps users manage expenses, analyze spending, and get AI-powered insights.
 
 ---
@@ -98,6 +100,8 @@ AI Insights
 ├── sql/
 │   └── schema.sql       # Database schema
 │
+├── tests/               # pytest API tests (run against PostgreSQL)
+│
 ├── pyproject.toml
 ├── uv.lock
 └── .env.example
@@ -143,6 +147,20 @@ uv run uvicorn app.main:app --reload
 ```bash
 uv run streamlit run ui/streamlit_app.py
 ```
+
+### 6. Run Tests
+
+The API tests run against a real PostgreSQL database. Create an empty test database (tables are created automatically, and all rows are wiped between tests, so don't point it at real data):
+
+```bash
+createdb expense_tracker_test
+pip install -r requirements-dev.txt
+pytest
+```
+
+Set `TEST_DATABASE_URL` if your test database isn't at `postgresql://postgres:postgres@localhost:5432/expense_tracker_test`. Ollama is stubbed out, so it doesn't need to be running.
+
+The same suite runs on every push and pull request via GitHub Actions.
 
 ---
 
